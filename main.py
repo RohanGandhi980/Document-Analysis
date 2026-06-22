@@ -8,15 +8,13 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse
 from dataclasses import dataclass
 
-
 @dataclass
 class DocBlock:
-    type: str       
+    type: str     
     content: str    
     hash_val: str   
     page_num: int   
 
-#pdf extractor
 class DynamicDocumentParser:
     @staticmethod
     def get_md5(text: str) -> str:
@@ -31,7 +29,7 @@ class DynamicDocumentParser:
         for page_index, page in enumerate(doc):
             page_number = page_index + 1
             
-            #extracting tables if any
+            # Extract Tables
             tables = page.find_tables()
             table_rects = []
             
@@ -52,7 +50,7 @@ class DynamicDocumentParser:
                     seen_hashes.add(h)
                     blocks.append(DocBlock(type="table", content=html_table, hash_val=h, page_num=page_number))
 
-            #extracting the text blocks
+            # Extract Text Blocks
             page_dict = page.get_text("dict", sort=True)
             for b in page_dict.get("blocks", []):
                 if b.get("type") == 0:
@@ -77,7 +75,7 @@ class DynamicDocumentParser:
                             
         return blocks
 
-#comparing the information from two sets of data 
+
 class DiffEngine:
     @staticmethod
     def word_level_diff(old_text: str, new_text: str) -> str:
@@ -113,7 +111,7 @@ class DiffEngine:
             if tag == "equal":
                 for k in range(j2 - j1):
                     nb = new_blocks[j1+k]
-                    results.append({"status": "Unchanged", "old_html": old_blocks[i1+k].content, "new_html": nb.content, "page_num": nb.page_num})
+                    results.append({"status": "UNCHANGED", "old_html": old_blocks[i1+k].content, "new_html": nb.content, "page_num": nb.page_num})
             
             elif tag == "replace":
                 if (i2 - i1) == (j2 - j1):
@@ -122,27 +120,27 @@ class DiffEngine:
                         nb = new_blocks[j1+k]
                         if ob.type == 'text' and nb.type == 'text':
                             diffed_html = DiffEngine.word_level_diff(ob.content, nb.content)
-                            results.append({"status": "Changed", "old_html": ob.content, "new_html": diffed_html, "page_num": nb.page_num})
+                            results.append({"status": "CHANGED", "old_html": ob.content, "new_html": diffed_html, "page_num": nb.page_num})
                         else:
-                            results.append({"status": "Removed", "old_html": ob.content, "new_html": "", "page_num": ob.page_num})
-                            results.append({"status": "Added", "old_html": "", "new_html": nb.content, "page_num": nb.page_num})
+                            results.append({"status": "REMOVED", "old_html": ob.content, "new_html": "", "page_num": ob.page_num})
+                            results.append({"status": "ADDED", "old_html": "", "new_html": nb.content, "page_num": nb.page_num})
                 else:
                     for i in range(i1, i2):
-                        results.append({"status": "Removed", "old_html": old_blocks[i].content, "new_html": "", "page_num": old_blocks[i].page_num})
+                        results.append({"status": "REMOVED", "old_html": old_blocks[i].content, "new_html": "", "page_num": old_blocks[i].page_num})
                     for j in range(j1, j2):
-                        results.append({"status": "Added", "old_html": "", "new_html": new_blocks[j].content, "page_num": new_blocks[j].page_num})
+                        results.append({"status": "ADDED", "old_html": "", "new_html": new_blocks[j].content, "page_num": new_blocks[j].page_num})
             
             elif tag == "delete":
                 for i in range(i1, i2):
-                    results.append({"status": "Removed", "old_html": old_blocks[i].content, "new_html": "", "page_num": old_blocks[i].page_num})
+                    results.append({"status": "REMOVED", "old_html": old_blocks[i].content, "new_html": "", "page_num": old_blocks[i].page_num})
             
             elif tag == "insert":
                 for j in range(j1, j2):
-                    results.append({"status": "Added", "old_html": "", "new_html": new_blocks[j].content, "page_num": new_blocks[j].page_num})
+                    results.append({"status": "ADDED", "old_html": "", "new_html": new_blocks[j].content, "page_num": new_blocks[j].page_num})
                     
         return results
 
-#fastapi
+
 app = FastAPI(title="Dynamic Page-Wise Document Comparator")
 
 HTML_TEMPLATE = """
@@ -151,7 +149,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> Document Comparator</title>
+    <title>Dynamic Document Comparator</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f8f9fa; color: #1e293b; margin: 0; padding: 20px; }
         .container { max-width: 1400px; margin: 0 auto; }
@@ -177,10 +175,10 @@ HTML_TEMPLATE = """
 
         /* Badges */
         .badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; color: white; letter-spacing: 0.5px;}
-        .badge-Unchanged { background: #64748b; }
-        .badge-Changed { background: #f04b23; }
-        .badge-Added { background: #0c9e45; }
-        .badge-Removed { background: #dc2626; }
+        .badge-UNCHANGED { background: #64748b; }
+        .badge-CHANGED { background: #f04b23; }
+        .badge-ADDED { background: #0c9e45; }
+        .badge-REMOVED { background: #dc2626; }
 
         /* Inline Diff Colors */
         .inline-removed { color: #dc2626; text-decoration: line-through; background-color: #fee2e2; padding: 0 2px; border-radius: 2px; }
@@ -243,14 +241,13 @@ async def compare_docs(old_file: UploadFile = File(...), new_file: UploadFile = 
     
     comparison_results = DiffEngine.compare_documents(old_blocks, new_blocks)
     
-    # Group results by their associated Page Number
+    #grouping results by page number
     page_groups = defaultdict(list)
     for res in comparison_results:
         page_groups[res["page_num"]].append(res)
     
     html_output = []
-    
-    # Render sections dynamically based on the page number
+
     for page_num in sorted(page_groups.keys()):
         page_html = f"""
         <div class="page-container">
@@ -271,9 +268,9 @@ async def compare_docs(old_file: UploadFile = File(...), new_file: UploadFile = 
             old_html = res["old_html"] if res["old_html"] else '<span class="empty-cell">-- No Content --</span>'
             new_html = res["new_html"] if res["new_html"] else '<span class="empty-cell">-- No Content --</span>'
             
-            if status == "Removed" and old_html != '<span class="empty-cell">-- No Content --</span>':
+            if status == "REMOVED" and old_html != '<span class="empty-cell">-- No Content --</span>':
                  old_html = f'<div style="color: #dc2626; text-decoration: line-through;">{old_html}</div>'
-            elif status == "Added" and new_html != '<span class="empty-cell">-- No Content --</span>':
+            elif status == "ADDED" and new_html != '<span class="empty-cell">-- No Content --</span>':
                  new_html = f'<div style="color: #16a34a; font-weight: bold;">{new_html}</div>'
 
             page_html += f"""
