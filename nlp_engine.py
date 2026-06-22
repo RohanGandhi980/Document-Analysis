@@ -1,4 +1,4 @@
-import fitz  # PyMuPDF
+import fitz  # 
 import hashlib
 import difflib
 import html
@@ -7,10 +7,10 @@ from dataclasses import dataclass
 
 @dataclass
 class DocBlock:
-    type: str       # 'text' or 'table'
-    content: str    # Raw text or HTML table string
-    hash_val: str   # MD5 hash for duplicates
-    page_num: int   # Tracks the page number
+    type: str       
+    content: str    
+    hash_val: str  
+    page_num: int   
 
 class DynamicDocumentParser:
     @staticmethod
