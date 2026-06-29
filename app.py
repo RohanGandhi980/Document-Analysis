@@ -1,11 +1,10 @@
-from collections import defaultdict
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse
+import html
 
-# This line links the two files together!
 from nlp_engine import DynamicDocumentParser, DiffEngine
 
-app = FastAPI(title="Dynamic Page-Wise Document Comparator")
+app = FastAPI(title="Dynamic Clause-Wise Document Comparator")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -23,7 +22,7 @@ HTML_TEMPLATE = """
         .btn { background-color: #073f88; color: white; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; }
         .btn:hover { background-color: #052c65; }
         
-        /* Page Sections */
+        /* Clause/Page Sections */
         .page-container { margin-bottom: 40px; background: white; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .page-header { background-color: #073f88; color: white; padding: 12px 20px; font-size: 18px; font-weight: bold; }
         
@@ -60,7 +59,7 @@ HTML_TEMPLATE = """
         <div class="header">
             <div>
                 <h2 style="margin:0; color:#073f88;">Document Comparison</h2>
-                <p style="margin:4px 0 0 0; font-size: 14px; color:#64748b;">Page Analysis</p>
+                <p style="margin:4px 0 0 0; font-size: 14px; color:#64748b;">Clause & Page-by-Page Tabular Analysis</p>
             </div>
             <form action="/compare" method="post" enctype="multipart/form-data" class="upload-form">
                 <div>
@@ -87,7 +86,7 @@ HTML_TEMPLATE = """
 async def home():
     empty_state = """
     <div style="text-align:center; padding: 80px; background: white; border-radius: 8px; border: 1px solid #e2e8f0; color:#64748b;">
-        Upload two PDF documents above to generate the page-by-page comparison.
+        Upload two PDF documents above to generate the clause-wise comparison.
     </div>
     """
     return HTML_TEMPLATE.replace("{RESULTS}", empty_state)
@@ -105,18 +104,21 @@ async def compare_docs(old_file: UploadFile = File(...), new_file: UploadFile = 
     
     comparison_results = DiffEngine.compare_documents(old_blocks, new_blocks)
     
-    # Group results by their associated Page Number
-    page_groups = defaultdict(list)
+    groups = {}
+    group_keys = []
     for res in comparison_results:
-        page_groups[res["page_num"]].append(res)
+        gk = res["group_key"]
+        if gk not in groups:
+            groups[gk] = []
+            group_keys.append(gk)
+        groups[gk].append(res)
     
     html_output = []
     
-    # Render sections dynamically based on the page number
-    for page_num in sorted(page_groups.keys()):
+    for gk in group_keys:
         page_html = f"""
         <div class="page-container">
-            <div class="page-header">Page {page_num}</div>
+            <div class="page-header">{html.escape(gk)}</div>
             <table class="diff-table">
                 <thead>
                     <tr>
@@ -128,7 +130,7 @@ async def compare_docs(old_file: UploadFile = File(...), new_file: UploadFile = 
                 <tbody>
         """
         
-        for res in page_groups[page_num]:
+        for res in groups[gk]:
             status = res["status"]
             old_html = res["old_html"] if res["old_html"] else '<span class="empty-cell">-- No Content --</span>'
             new_html = res["new_html"] if res["new_html"] else '<span class="empty-cell">-- No Content --</span>'
