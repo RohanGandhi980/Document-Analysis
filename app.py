@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 import html
 from nlp_engine import DynamicDocumentParser, DiffEngine
 
-app = FastAPI(title="Clause-Wise Document Comparator")
+app = FastAPI(title="Clause Wise Document Comparator")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -11,13 +11,14 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> Document Comparison</title>
+    <title>CAR Document Comparison</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f3f4f6; color: #1e293b; margin: 0; }
         
         .topbar { background: #fff; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin-bottom: 30px; }
         .topbar h1 { margin: 0; font-size: 24px; color: #181d27; }
         .top-actions { display: flex; gap: 15px; align-items: center; }
+        .bell { border: 1px solid #e1e5eb; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 4px; color: #f2ae00; font-weight:bold; }
         .logout { border: 1px solid #053a7d; color: #053a7d; font-weight: 700; border-radius: 4px; padding: 10px 20px; font-size:13px; text-transform:uppercase; cursor:pointer;}
         
         .container { max-width: 1300px; margin: 0 auto; padding: 0 20px;}
@@ -28,7 +29,11 @@ HTML_TEMPLATE = """
         
         .result-card { background: #fff; border: 1px solid #d7dce3; border-radius: 6px; margin-bottom: 25px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
         .result-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid #d7dce3; font-weight: 800; color: #1f2937; background-color: #f8fafc;}
-        .result-body { padding: 18px; line-height: 1.7; font-size: 15px; color: #1f2937; }
+        
+        /* Structured Paragraphs */
+        .result-body { padding: 18px; color: #1f2937; }
+        .result-body p { margin-top: 0; margin-bottom: 12px; line-height: 1.6; font-size: 15px; text-align: justify; }
+        .result-body p:last-child { margin-bottom: 0; }
         
         .CHANGED-card { border-color: #d7dce3; }
         .REMOVED-card { border-color: #ff6b61; background: #fff5f3; }
@@ -45,15 +50,29 @@ HTML_TEMPLATE = """
         .badge.REMOVED { background: #dc2626; }
         .badge.UNCHANGED { background: #64748b; }
 
-        .removed { color: #dc2626; text-decoration: line-through; background-color: #fee2e2; padding: 0 2px; border-radius: 2px;}
-        .added { color: #16a34a; font-weight: bold; background-color: #dcfce7; padding: 0 2px; border-radius: 2px;}
+        /* Inline Spans */
+        span.removed { color: #dc2626; text-decoration: line-through; background-color: #fee2e2; padding: 0 2px; border-radius: 2px;}
+        span.added { color: #16a34a; font-weight: bold; background-color: #dcfce7; padding: 0 2px; border-radius: 2px;}
+
+        /* Block-level full paragraph replacements */
+        p.removed { background-color: #fee2e2; color: #dc2626; border-left: 3px solid #dc2626; padding-left: 10px; }
+        p.added { background-color: #dcfce7; color: #16a34a; border-left: 3px solid #16a34a; padding-left: 10px; }
+
+        /* Block-level full table replacements */
+        .removed-table { border: 2px solid #ff6b61; position: relative; margin-bottom: 15px; }
+        .removed-table::after { content: "REMOVED TABLE"; position: absolute; top: -10px; left: 10px; background: #ff6b61; color: white; font-size: 10px; padding: 2px 6px; font-weight: bold; border-radius: 4px;}
+        .added-table { border: 2px solid #57c783; position: relative; margin-bottom: 15px; }
+        .added-table::after { content: "ADDED TABLE"; position: absolute; top: -10px; left: 10px; background: #57c783; color: white; font-size: 10px; padding: 2px 6px; font-weight: bold; border-radius: 4px;}
 
         .toggle-btn { margin: 0 18px 15px; background: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; }
         .toggle-btn:hover { background: #bae6fd; }
-        .final-version { display: none; margin: 0 18px 18px; border-left: 3px solid #29c6e8; background: #eefdff; padding: 14px 16px; line-height: 1.6; font-size: 14px;}
         
-        .doc-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-        .doc-table th, .doc-table td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; background-color: #ffffff;}
+        .final-version { display: none; margin: 0 18px 18px; border-left: 3px solid #29c6e8; background: #eefdff; padding: 14px 16px; }
+        .final-version p { margin-top: 0; margin-bottom: 12px; line-height: 1.6; font-size: 14px; text-align: justify; }
+        .final-version p:last-child { margin-bottom: 0; }
+        
+        .doc-table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 13px; background: white;}
+        .doc-table th, .doc-table td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }
     </style>
     <script>
         function toggleFinal(btn) {
@@ -95,7 +114,7 @@ HTML_TEMPLATE = """
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    empty_state = '<div style="text-align:center; padding: 60px; background: white; border-radius: 8px; border: 1px solid #e2e8f0; color:#64748b;">Upload 2 PDF to generate clause wise comparison.</div>'
+    empty_state = '<div style="text-align:center; padding: 60px; background: white; border-radius: 8px; border: 1px solid #e2e8f0; color:#64748b;">Upload 2 PDF for clause wise comparison.</div>'
     return HTML_TEMPLATE.replace("{RESULTS}", empty_state)
 
 @app.post("/compare", response_class=HTMLResponse)
@@ -122,16 +141,16 @@ async def compare_docs(old_file: UploadFile = File(...), new_file: UploadFile = 
         sim_score_text = f"Similarity: {row.similarity:.1f}%" if status not in ["ADDED", "REMOVED"] else ""
         
         if status == "REMOVED":
-            body_html = f'<span class="removed">{row.old_html}</span>'
+            body_html = f'<div class="removed-table" style="border:none;">{row.old_html}</div>' 
             final_html = ""
         elif status == "ADDED":
-            body_html = f'<span class="added">{row.new_html}</span>'
+            body_html = f'<div class="added-table" style="border:none;">{row.new_html}</div>'
             final_html = row.new_html
         elif status == "UNCHANGED":
             body_html = row.old_html
             final_html = row.old_html
         else:
-            body_html = DiffEngine.diff_html_safe(row.old_html, row.new_html)
+            body_html = row.diff_html
             final_html = row.new_html
             
         card_html = f"""
