@@ -21,9 +21,9 @@ class ComparisonRow:
     index: int
     old_heading: str
     new_heading: str
-    old_html: str      # Clean HTML of old clause
-    new_html: str      # Clean HTML of new clause
-    diff_html: str     # The generated side-by-side diff
+    old_html: str      
+    new_html: str      
+    diff_html: str     
     status: str
     similarity: float
 
@@ -57,7 +57,6 @@ class DynamicDocumentParser:
 
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             for page in pdf.pages:
-                # Crop margins to kill running headers/footers
                 width = page.width
                 height = page.height
                 bounding_box = (0, height * 0.08, width, height * 0.92)
@@ -65,7 +64,7 @@ class DynamicDocumentParser:
                 
                 page_items = []
                 
-                # 1. Extract Structured HTML Tables
+                #extracting the tables
                 tables = cropped_page.find_tables()
                 table_bboxes = [t.bbox for t in tables]
                 for t in tables:
@@ -79,7 +78,7 @@ class DynamicDocumentParser:
                     html_table += "</table>"
                     page_items.append({"type": "table", "content": html_table, "top": t.bbox[1], "bottom": t.bbox[3]})
                 
-                # 2. Extract Text Lines
+                #extracting text lines
                 words = cropped_page.extract_words(keep_blank_chars=True)
                 filtered_words = []
                 for w in words:
@@ -102,7 +101,7 @@ class DynamicDocumentParser:
                         bottom = max(w['bottom'] for w in line_words)
                         page_items.append({"type": "line", "content": line_text, "top": top, "bottom": bottom})
                 
-                # 3. Sort Geometrically and Build Structures
+                #structured analysis
                 page_items.sort(key=lambda x: x["top"])
                 
                 for item in page_items:
