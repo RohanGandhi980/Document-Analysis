@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 import html
 from nlp_engine import DynamicDocumentParser, DiffEngine
 
-app = FastAPI(title="Clause Wise Document Comparator")
+app = FastAPI(title="Clause Wise Comparator")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -89,9 +89,8 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="topbar">
-        <h1>CAR Document Comparison</h1>
+        <h1>Document Comparison</h1>
         <div class="top-actions">
-            <div class="bell">🔔</div>
             <div class="logout">LOGOUT</div>
         </div>
     </div>
@@ -114,7 +113,7 @@ HTML_TEMPLATE = """
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    empty_state = '<div style="text-align:center; padding: 60px; background: white; border-radius: 8px; border: 1px solid #e2e8f0; color:#64748b;">Upload 2 PDF for clause wise comparison.</div>'
+    empty_state = '<div style="text-align:center; padding: 60px; background: white; border-radius: 8px; border: 1px solid #e2e8f0; color:#64748b;">Upload 2 PDFs to generate clause wise comparison.</div>'
     return HTML_TEMPLATE.replace("{RESULTS}", empty_state)
 
 @app.post("/compare", response_class=HTMLResponse)
@@ -133,9 +132,10 @@ async def compare_docs(old_file: UploadFile = File(...), new_file: UploadFile = 
     html_output = []
     
     for row in rows:
-        heading = row.new_heading or row.old_heading
+        #following indexing of latest document
+        heading = row.new_heading if row.new_heading else row.old_heading
         if row.old_heading and row.new_heading and row.old_heading != row.new_heading:
-            heading = f"{row.old_heading} // {row.new_heading}"
+            heading = f"{row.old_heading} ➔ {row.new_heading}"
             
         status = row.status
         sim_score_text = f"Similarity: {row.similarity:.1f}%" if status not in ["ADDED", "REMOVED"] else ""

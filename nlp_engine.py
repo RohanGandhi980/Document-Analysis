@@ -4,10 +4,12 @@ import html
 import re
 import io
 from dataclasses import dataclass
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 @dataclass
 class ClauseBlock:
-    type: str  # "p" or "table"
+    type: str  
     content: str
 
 @dataclass
@@ -64,7 +66,6 @@ class DynamicDocumentParser:
                 
                 page_items = []
                 
-                #extracting the tables
                 tables = cropped_page.find_tables()
                 table_bboxes = [t.bbox for t in tables]
                 for t in tables:
@@ -78,7 +79,6 @@ class DynamicDocumentParser:
                     html_table += "</table>"
                     page_items.append({"type": "table", "content": html_table, "top": t.bbox[1], "bottom": t.bbox[3]})
                 
-                #extracting text lines
                 words = cropped_page.extract_words(keep_blank_chars=True)
                 filtered_words = []
                 for w in words:
@@ -101,7 +101,6 @@ class DynamicDocumentParser:
                         bottom = max(w['bottom'] for w in line_words)
                         page_items.append({"type": "line", "content": line_text, "top": top, "bottom": bottom})
                 
-                #structured analysis
                 page_items.sort(key=lambda x: x["top"])
                 
                 for item in page_items:
@@ -109,7 +108,6 @@ class DynamicDocumentParser:
                         flush_paragraph()
                         clauses_dict[current_key]["blocks"].append(ClauseBlock(type="table", content=item["content"]))
                         prev_bottom = item["bottom"]
-                    
                     elif item["type"] == "line":
                         text = item["content"]
                         if DynamicDocumentParser.CODE_RE.search(text):
@@ -136,13 +134,11 @@ class DynamicDocumentParser:
                     key=key,
                     blocks=data["blocks"]
                 ))
-                
         return final_clauses
 
 class DiffEngine:
     @staticmethod
     def render_blocks(blocks: list[ClauseBlock]) -> str:
-        """Renders raw blocks cleanly without diff marks."""
         out = []
         for b in blocks:
             if b.type == "p":
@@ -152,21 +148,15 @@ class DiffEngine:
         return "".join(out)
 
     @staticmethod
-    def get_similarity(old_blocks: list[ClauseBlock], new_blocks: list[ClauseBlock]) -> float:
-        old_text = " ".join([b.content for b in old_blocks if b.type == "p"])
-        new_text = " ".join([b.content for b in new_blocks if b.type == "p"])
-        if not old_text and not new_text: return 100.0
-        if not old_text or not new_text: return 0.0
-        return difflib.SequenceMatcher(None, old_text, new_text).ratio() * 100
+    def get_plain_text(blocks: list[ClauseBlock]) -> str:
+        return " ".join([b.content for b in blocks if b.type == "p"])
 
     @staticmethod
     def word_diff_plain(old_text: str, new_text: str) -> str:
-        """Safely diffs plain text. No HTML tags exist here, so it cannot corrupt the DOM."""
         old_tokens = re.findall(r"[\w]+|[^\w\s]|\s+", old_text)
         new_tokens = re.findall(r"[\w]+|[^\w\s]|\s+", new_text)
         matcher = difflib.SequenceMatcher(None, old_tokens, new_tokens, autojunk=False)
         parts = []
-        
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag == "equal":
                 parts.append(html.escape("".join(new_tokens[j1:j2])))
@@ -181,7 +171,6 @@ class DiffEngine:
 
     @staticmethod
     def diff_blocks(old_blocks: list[ClauseBlock], new_blocks: list[ClauseBlock]) -> str:
-        """Safely diffs block-by-block. Tables are NEVER word-diffed."""
         out = []
         matcher = difflib.SequenceMatcher(
             None, 
@@ -189,64 +178,111 @@ class DiffEngine:
             [(b.type, b.content) for b in new_blocks], 
             autojunk=False
         )
-        
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag == "equal":
                 for b in new_blocks[j1:j2]:
                     if b.type == "p": out.append(f"<p>{html.escape(b.content)}</p>")
                     else: out.append(b.content)
-                    
             elif tag == "replace" and (i2 - i1) == 1 and (j2 - j1) == 1 and old_blocks[i1].type == "p" and new_blocks[j1].type == "p":
-                # Only run inline text diff if exactly one paragraph replaces another
                 diffed_text = DiffEngine.word_diff_plain(old_blocks[i1].content, new_blocks[j1].content)
                 out.append(f"<p>{diffed_text}</p>")
-                
             else:
-                # For completely different blocks or tables, just stack the old (red) and new (green)
                 for b in old_blocks[i1:i2]:
                     if b.type == "p": out.append(f'<p class="removed">{html.escape(b.content)}</p>')
                     else: out.append(f'<div class="removed-table">{b.content}</div>')
                 for b in new_blocks[j1:j2]:
                     if b.type == "p": out.append(f'<p class="added">{html.escape(b.content)}</p>')
                     else: out.append(f'<div class="added-table">{b.content}</div>')
-                    
         return "".join(out)
 
     @staticmethod
     def pair_clauses(old_clauses: list[Clause], new_clauses: list[Clause]) -> list[ComparisonRow]:
-        old_by_key = {c.key: c for c in old_clauses}
-        new_by_key = {c.key: c for c in new_clauses}
+        old_texts = [DiffEngine.get_plain_text(c.blocks) for c in old_clauses]
+        new_texts = [DiffEngine.get_plain_text(c.blocks) for c in new_clauses]
         
-        all_keys = []
-        for c in old_clauses:
-            if c.key not in all_keys: all_keys.append(c.key)
-        for c in new_clauses:
-            if c.key not in all_keys: all_keys.append(c.key)
+        #vector embeddings
+        all_texts = old_texts + new_texts
+        if not all_texts:
+            return []
             
+        vectorizer = TfidfVectorizer(stop_words='english')
+        vectorizer.fit(all_texts)
+        old_vecs = vectorizer.transform(old_texts)
+        new_vecs = vectorizer.transform(new_texts)
+        sim_matrix = cosine_similarity(old_vecs, new_vecs) * 100
+
+        old_matched = set()
+        new_matched = set()
+        pairs = []
+
+        new_by_key = {c.key: (i, c) for i, c in enumerate(new_clauses)}
+        for o_idx, old_c in enumerate(old_clauses):
+            if old_c.key in new_by_key:
+                n_idx, new_c = new_by_key[old_c.key]
+                sim_score = sim_matrix[o_idx][n_idx]
+                
+                if sim_score >= 90.0:
+                    status = "UNCHANGED"
+                elif sim_score >= 65.0:
+                    status = "CHANGED"
+                else:
+                    continue 
+                    
+                pairs.append((old_c, new_c, sim_score, status))
+                old_matched.add(o_idx)
+                new_matched.add(n_idx)
+
+        for o_idx, old_c in enumerate(old_clauses):
+            if o_idx in old_matched: continue
+            
+            best_match_idx = -1
+            best_sim = -1.0
+            
+            for n_idx, new_c in enumerate(new_clauses):
+                if n_idx in new_matched: continue
+                sim = sim_matrix[o_idx][n_idx]
+                
+                if sim > best_sim:
+                    best_sim = sim
+                    best_match_idx = n_idx
+                    
+            if best_sim >= 65.0:
+                status = "UNCHANGED" if best_sim >= 90.0 else "CHANGED"
+                pairs.append((old_c, new_clauses[best_match_idx], best_sim, status))
+                old_matched.add(o_idx)
+                new_matched.add(best_match_idx)
+
         rows = []
-        for idx, key in enumerate(all_keys):
-            old_c = old_by_key.get(key)
-            new_c = new_by_key.get(key)
-            
-            old_blocks = old_c.blocks if old_c else []
-            new_blocks = new_c.blocks if new_c else []
-            
-            sim_score = DiffEngine.get_similarity(old_blocks, new_blocks)
-            
-            if old_c and not new_c: status = "REMOVED"
-            elif new_c and not old_c: status = "ADDED"
-            elif sim_score == 100.0: status = "UNCHANGED"
-            else: status = "CHANGED"
-            
+        for (old_c, new_c, sim_score, status) in pairs:
             rows.append(ComparisonRow(
-                index=idx + 1,
-                old_heading=old_c.heading if old_c else "",
-                new_heading=new_c.heading if new_c else "",
-                old_html=DiffEngine.render_blocks(old_blocks),
-                new_html=DiffEngine.render_blocks(new_blocks),
-                diff_html=DiffEngine.diff_blocks(old_blocks, new_blocks) if status == "CHANGED" else "",
+                index=0,
+                old_heading=old_c.heading,
+                new_heading=new_c.heading, 
+                old_html=DiffEngine.render_blocks(old_c.blocks),
+                new_html=DiffEngine.render_blocks(new_c.blocks),
+                diff_html=DiffEngine.diff_blocks(old_c.blocks, new_c.blocks) if status == "CHANGED" else "",
                 status=status,
                 similarity=sim_score
             ))
+            
+        for o_idx, old_c in enumerate(old_clauses):
+            if o_idx not in old_matched:
+                rows.append(ComparisonRow(
+                    index=0, old_heading=old_c.heading, new_heading="",
+                    old_html=DiffEngine.render_blocks(old_c.blocks), new_html="", diff_html="",
+                    status="REMOVED", similarity=0.0
+                ))
+                
+        for n_idx, new_c in enumerate(new_clauses):
+            if n_idx not in new_matched:
+                rows.append(ComparisonRow(
+                    index=0, old_heading="", new_heading=new_c.heading,
+                    old_html="", new_html=DiffEngine.render_blocks(new_c.blocks), diff_html="",
+                    status="ADDED", similarity=0.0
+                ))
+                
+        rows.sort(key=lambda r: r.new_heading if r.new_heading else r.old_heading)
+        for idx, r in enumerate(rows):
+            r.index = idx + 1
             
         return rows
